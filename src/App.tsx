@@ -9,7 +9,7 @@ import { Provider, useSelector, useDispatch } from 'react-redux';
 import axios from 'axios';
 import io from 'socket.io-client';
 import * as jsonpatch from 'fast-json-patch';
-import _ from 'lodash';
+import * as jsonpointer from 'jsonpointer';
 
 // Определение типов состояния
 interface WidgetState {
@@ -69,7 +69,7 @@ const useBindings = (bindings: any = {}) =>
   useSelector(
     createSelector(
       Object.keys(bindings).map(key => (state: any) => ({
-        [key]: _.get(state.widget.data, bindings[key])
+        [key]: jsonpointer.get(state.widget.data, bindings[key])
       })),
       (...bindings: any) => Object.assign({}, ...bindings)
     )
