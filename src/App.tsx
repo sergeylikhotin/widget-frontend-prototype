@@ -1,10 +1,6 @@
 import React, { useEffect } from 'react';
-import {
-  configureStore,
-  createSelector,
-  createSlice,
-  PayloadAction
-} from '@reduxjs/toolkit';
+import { configureStore, createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createStructuredSelector } from 'reselect';
 import { Provider, useSelector, useDispatch } from 'react-redux';
 import axios from 'axios';
 import io from 'socket.io-client';
@@ -18,7 +14,7 @@ interface WidgetState {
 }
 
 const initialState: WidgetState = {
-  schema: {},
+  schema: null,
   data: {}
 };
 
@@ -27,10 +23,10 @@ const widgetSlice = createSlice({
   name: 'widget',
   initialState,
   reducers: {
-    setSchema: (state, action: PayloadAction) => {
+    setSchema: (state, action: PayloadAction<any>) => {
       state.schema = action.payload;
     },
-    setData: (state, action: PayloadAction) => {
+    setData: (state, action: PayloadAction<any>) => {
       state.data = action.payload;
     },
     applyDataPatch: (state, action: PayloadAction<jsonpatch.Operation[]>) => {
@@ -56,24 +52,13 @@ export type AppDispatch = typeof store.dispatch;
 // Пример базовых компонентов
 const Text: React.FC<{
   value: string;
-}> = React.memo(({ value }) => <p>{value.toString()}</p>);
+}> = ({ value }) => <p>{value.toString()}</p>;
 const Container: React.FC<{
   children: React.ReactNode[];
 }> = ({ children }) => <div>{children}</div>;
 const Image: React.FC<{
   url: string;
 }> = ({ url }) => <img src={url} alt="" />;
-
-// Хук для связывания данных
-const useBindings = (bindings: any = {}) =>
-  useSelector(
-    createSelector(
-      Object.keys(bindings).map(key => (state: any) => ({
-        [key]: jsonpointer.get(state.widget.data, bindings[key])
-      })),
-      (...bindings: any) => Object.assign({}, ...bindings)
-    )
-  );
 
 // Хук для WebSocket
 const useWebSocket = () => {
@@ -91,6 +76,21 @@ const useWebSocket = () => {
   }, [dispatch]);
 };
 
+// Хук для связывания данных
+const useBindings = (bindings: any) => {
+  const selector = createStructuredSelector<any, any>(
+    Object.keys(bindings ?? {}).reduce(
+      (selector, key) => ({
+        ...selector,
+        [key]: (state: any) => jsonpointer.get(state.widget.data, bindings[key])
+      }),
+      {}
+    )
+  );
+
+  return useSelector(selector);
+};
+
 const components = {
   RootContainer: Container,
 
@@ -100,16 +100,19 @@ const components = {
 };
 
 // Функция для рекурсивного рендеринга компонентов
-const RenderSchemaComponent = ({ widget }: any) => {
-  const bindings = useBindings(widget.bindings);
-  const props = { ...widget.props, ...bindings };
+const RenderWidgetComponent = ({ widgetComponent }: any) => {
+  const bindings = useBindings(widgetComponent.bindings);
+  const props = { ...widgetComponent.props, ...bindings };
 
-  const Component = components[widget.name as keyof typeof components];
+  const Component = components[widgetComponent.name as keyof typeof components];
+  if (Component == null) {
+    return <div>No {widgetComponent.name} component found.</div>;
+  }
 
   return (
     <Component {...props}>
-      {widget.children?.map((child: any) => (
-        <RenderSchemaComponent key={child.id} widget={child} />
+      {widgetComponent.children?.map((child: any) => (
+        <RenderWidgetComponent key={child.id} widgetComponent={child} />
       ))}
     </Component>
   );
@@ -118,29 +121,28 @@ const RenderSchemaComponent = ({ widget }: any) => {
 // Основной компонент приложения
 const App: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
-  const widgets = useSelector((state: RootState) => state.widget.schema);
+  const widget = useSelector((state: RootState) => state.widget.schema);
 
   useWebSocket();
 
   useEffect(() => {
-    const fetchSchema = async () => {
-      try {
-        const response = await axios.get(
-          'http://localhost:3001/widgets/widget/render'
-        );
-        dispatch(setSchema(response.data));
-      } catch (error) {
-        console.error('Failed to fetch schema:', error);
-      }
-    };
-    fetchSchema();
+    const abortCtrl = new AbortController();
+
+    axios
+      .get('http://localhost:3001/widgets/widget/render', {
+        signal: abortCtrl.signal
+      })
+      .then(res => dispatch(setSchema(res.data)))
+      .catch(err => console.error('Failed to fetch schema:', err));
+
+    return () => abortCtrl.abort();
   }, [dispatch]);
 
   return (
     <div>
-      {widgets.children?.map((widget: any) => (
-        <RenderSchemaComponent key={widget.id} widget={widget} />
-      ))}
+      {widget != null ? (
+        <RenderWidgetComponent widgetComponent={widget} />
+      ) : null}
     </div>
   );
 };
