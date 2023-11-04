@@ -1,0 +1,1 @@
+export const Initial = () => null;
